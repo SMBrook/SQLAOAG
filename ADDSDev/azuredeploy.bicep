@@ -28,28 +28,28 @@ param virtualMachineName string = 'adVM'
 param virtualNetworkName string = 'adVNET'
 
 @description('Virtual network address range.')
-param virtualNetworkAddressRange string = '10.0.0.0/16'
-
-@description('Inbound NAT rules name.')
-param inboundNatRulesName string = 'adRDP'
+param virtualNetworkAddressRange string = '10.100.0.0/16'
 
 @description('Network interface name.')
 param networkInterfaceName string = 'adNic'
 
 @description('Private IP address.')
-param privateIPAddress string = '10.0.0.4'
+param privateIPAddress string = '10.100.0.4'
 
 @description('Subnet name.')
-param subnetName string = 'adSubnet'
+param adsubnetname string = 'ADSubnet'
 
-@description('Subnet IP range.')
-param subnetRange string = '10.0.0.0/24'
+@description('AD Subnet IP range.')
+param adsubnetrange string = '10.100.0.0/24'
+
+@description('Subnet name.')
+param sqlsubnetname string = 'SQLSubnet'
+
+@description('AD Subnet IP range.')
+param sqlsubnetrange string = '10.100.1.0/24'
 
 @description('Availability set name.')
 param availabilitySetName string = 'adAvailabiltySet'
-
-@description('Load balancer name.')
-param loadBalancerName string = 'adLoadBalancer'
 
 resource availabilitySetName_resource 'Microsoft.Compute/availabilitySets@2019-03-01' = {
   location: location
@@ -68,8 +68,10 @@ module VNet 'modules/VNET.bicep'= {
   params: {
     virtualNetworkName: virtualNetworkName
     virtualNetworkAddressRange: virtualNetworkAddressRange
-    subnetName: subnetName
-    subnetRange: subnetRange
+    adsubnetname: adsubnetname
+    adsubnetrange: adsubnetrange
+    sqlsubnetname: sqlsubnetname
+    sqlsubnetrange: sqlsubnetrange
     location: location
   }
 }
@@ -85,18 +87,8 @@ resource networkInterfaceName_resource 'Microsoft.Network/networkInterfaces@2019
           privateIPAllocationMethod: 'Static'
           privateIPAddress: privateIPAddress
           subnet: {
-            id: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, subnetName)
+            id: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, adsubnetname)
           }
-          loadBalancerBackendAddressPools: [
-            {
-              id: resourceId('Microsoft.Network/loadBalancers/backendAddressPools', loadBalancerName, backendAddressPoolName)
-            }
-          ]
-          loadBalancerInboundNatRules: [
-            {
-              id: resourceId('Microsoft.Network/loadBalancers/inboundNatRules', loadBalancerName, inboundNatRulesName)
-            }
-          ]
         }
       }
     ]
@@ -192,8 +184,10 @@ module UpdateVNetDNS 'modules/vnet-with-dns-server.bicep' /*TODO: replace with c
   params: {
     virtualNetworkName: virtualNetworkName
     virtualNetworkAddressRange: virtualNetworkAddressRange
-    subnetName: subnetName
-    subnetRange: subnetRange
+    adsubnetname: adsubnetname
+    adsubnetrange: adsubnetrange
+    sqlsubnetname: sqlsubnetname
+    sqlsubnetrange: sqlsubnetrange
     DNSServerAddress: [
       privateIPAddress
     ]
@@ -203,3 +197,203 @@ module UpdateVNetDNS 'modules/vnet-with-dns-server.bicep' /*TODO: replace with c
     virtualMachineName_CreateADForest
   ]
 }
+
+@description('The name of the VM')
+param sqlvirtualMachineName string = 'sql1'
+
+@description('The virtual machine size.')
+param virtualMachineSize string = 'Standard_D8s_v3'
+
+@allowed([
+  'sql2019-ws2019'
+  'sql2017-ws2019'
+  'SQL2017-WS2016'
+  'SQL2016SP1-WS2016'
+  'SQL2016SP2-WS2016'
+  'SQL2014SP3-WS2012R2'
+  'SQL2014SP2-WS2012R2'
+])
+@description('Windows Server and SQL Offer')
+param imageOffer string = 'sql2019-ws2019'
+
+@allowed([
+  'Standard'
+  'Enterprise'
+  'SQLDEV'
+  'Web'
+  'Express'
+])
+@description('SQL Server Sku')
+param sqlSku string = 'SQLDEV'
+
+@description('The admin user name of the VM')
+param sqladminUsername string
+
+@description('The admin password of the VM')
+@secure()
+param sqladminPassword string
+
+@allowed([
+  'GENERAL'
+  'OLTP'
+  'DW'
+])
+@description('SQL Server Workload Type')
+param storageWorkloadType string = 'GENERAL'
+
+@minValue(1)
+@maxValue(8)
+@description('Amount of data disks (100GB each) for SQL Data files')
+param sqlDataDisksCount int = 2
+
+@description('Path for SQL Data files. Please choose drive letter from F to Z, and other drives from A to E are reserved for system')
+param dataPath string = 'F:\\SQLData'
+
+@minValue(1)
+@maxValue(8)
+@description('Amount of data disks (100GB each) for SQL Log files')
+param sqlLogDisksCount int = 2
+
+@description('Path for SQL Log files. Please choose drive letter from F to Z and different than the one used for SQL data. Drive letter from A to E are reserved for system')
+param logPath string = 'G:\\SQLLog'
+
+var networkInterfaceName_var = '${sqlvirtualMachineName}-nic'
+var diskConfigurationType = 'NEW'
+var dataDisksLuns = array(range(0, sqlDataDisksCount))
+var logDisksLuns = array(range(sqlDataDisksCount, sqlLogDisksCount))
+var dataDisks = {
+  createOption: 'Empty'
+  caching: 'ReadOnly'
+  writeAcceleratorEnabled: false
+  storageAccountType: 'Premium_LRS'
+  diskSizeGB: 100
+}
+var tempDbPath = 'D:\\SQLTemp'
+
+resource sqlnetworkInterfaceName 'Microsoft.Network/networkInterfaces@2020-06-01' = {
+  name: networkInterfaceName_var
+  location: location
+  properties: {
+    ipConfigurations: [
+      {
+        name: 'ipconfig1'
+        properties: {
+          subnet: {
+            id: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, sqlsubnetname)
+          }
+          privateIPAllocationMethod: 'Dynamic'
+        }
+      }
+    ]
+    enableAcceleratedNetworking: true
+  }
+  dependsOn: [
+    VNet
+  ]
+}
+
+resource sqlvirtualMachineName_resource 'Microsoft.Compute/virtualMachines@2020-06-01' = {
+  name: sqlvirtualMachineName
+  location: location
+  properties: {
+    hardwareProfile: {
+      vmSize: virtualMachineSize
+    }
+    storageProfile: {
+      osDisk: {
+        createOption: 'FromImage'
+        managedDisk: {
+          storageAccountType: 'Premium_LRS'
+        }
+      }
+      imageReference: {
+        publisher: 'MicrosoftSQLServer'
+        offer: imageOffer
+        sku: sqlSku
+        version: 'latest'
+      }
+      dataDisks: [for j in range(0, (sqlDataDisksCount + sqlLogDisksCount)): {
+        lun: j
+        createOption: dataDisks.createOption
+        caching: ((j >= sqlDataDisksCount) ? 'None' : dataDisks.caching)
+        writeAcceleratorEnabled: dataDisks.writeAcceleratorEnabled
+        diskSizeGB: dataDisks.diskSizeGB
+        managedDisk: {
+          storageAccountType: dataDisks.storageAccountType
+        }
+      }]
+    }
+    networkProfile: {
+      networkInterfaces: [
+        {
+          id: sqlnetworkInterfaceName.id
+        }
+      ]
+    }
+    osProfile: {
+      computerName: sqlvirtualMachineName
+      adminUsername: sqladminUsername
+      adminPassword: sqladminPassword
+      windowsConfiguration: {
+        enableAutomaticUpdates: true
+        provisionVMAgent: true
+      }
+    }
+  }
+  dependsOn: [
+    UpdateVNetDNS
+  ]
+}
+
+resource sqlvirtualMachineExtension 'Microsoft.Compute/virtualMachines/extensions@2021-03-01' = {
+  parent: sqlvirtualMachineName_resource
+  name: 'sqljoindomain'
+  location: location
+  properties: {
+    publisher: 'Microsoft.Compute'
+    type: 'JsonADDomainExtension'
+    typeHandlerVersion: '1.3'
+    autoUpgradeMinorVersion: true
+    settings: {
+      name: domainName
+      ouPath: ''
+      user: '${domainName}\\${adminUsername}'
+      restart: true
+      options: 3
+    }
+    protectedSettings: {
+      Password: adminPassword
+    }
+  }
+}
+
+
+resource Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName 'Microsoft.SqlVirtualMachine/sqlVirtualMachines@2017-03-01-preview' = {
+  name: sqlvirtualMachineName
+  location: location
+  properties: {
+    virtualMachineResourceId: sqlvirtualMachineName_resource.id
+    sqlManagement: 'Full'
+    sqlServerLicenseType: 'PAYG'
+    storageConfigurationSettings: {
+      diskConfigurationType: diskConfigurationType
+      storageWorkloadType: storageWorkloadType
+      sqlDataSettings: {
+        luns: dataDisksLuns
+        defaultFilePath: dataPath
+      }
+      sqlLogSettings: {
+        luns: logDisksLuns
+        defaultFilePath: logPath
+      }
+      sqlTempDbSettings: {
+        defaultFilePath: tempDbPath
+      }
+    }
+  }
+  dependsOn: [
+    sqlvirtualMachineExtension
+  ]
+}
+
+output sqladminUsername string = sqladminUsername

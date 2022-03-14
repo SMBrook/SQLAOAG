@@ -5,10 +5,16 @@ param virtualNetworkName string
 param virtualNetworkAddressRange string
 
 @description('The name of the subnet created in the new VNET')
-param subnetName string
+param adsubnetname string
 
 @description('The address range of the subnet created in the new VNET')
-param subnetRange string
+param adsubnetrange string
+
+@description('The name of the subnet created in the new VNET')
+param sqlsubnetname string
+
+@description('The name of the subnet created in the new VNET')
+param sqlsubnetrange string
 
 @description('Location for all resources.')
 param location string
@@ -24,9 +30,15 @@ resource virtualNetworkName_resource 'Microsoft.Network/virtualNetworks@2020-08-
     }
     subnets: [
       {
-        name: subnetName
+        name: adsubnetname
         properties: {
-          addressPrefix: subnetRange
+          addressPrefix: adsubnetrange
+        }
+      }
+      {
+        name: sqlsubnetname
+        properties: {
+          addressPrefix: sqlsubnetrange
         }
       }
     ]
