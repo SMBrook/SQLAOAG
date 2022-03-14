@@ -4,7 +4,7 @@ param location string = resourceGroup().location
 @description('enable Accelerated Networking on Azure SQL Virtual Machines')
 param enableAcceleratedNetworking bool
 
-@description('Specify the resourc egroup for virtual network')
+@description('Specify the resource group for virtual network')
 param vnetResourceGroup string
 
 @description('Specify the virtual network for Listener IP Address')

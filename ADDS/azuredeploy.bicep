@@ -15,7 +15,7 @@ param dnsPrefix string
 param vmSize string = 'Standard_D2s_v3'
 
 @description('The location of resources, such as templates and DSC modules, that the template depends on')
-param artifactsLocation string = deployment().properties.templateLink.uri
+param artifactsLocation string = 'https://raw.githubusercontent.com/SMBrook/SQLAOAG/main/ADDS/'
 
 @description('Auto-generated token to access _artifactsLocation. Leave it blank unless you need to provide your own value.')
 @secure()
