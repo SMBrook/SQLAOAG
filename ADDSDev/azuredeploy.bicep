@@ -270,8 +270,15 @@ var dataDisks = {
 }
 var tempDbPath = 'D:\\SQLTemp'
 
-resource sqlnetworkInterfaceName 'Microsoft.Network/networkInterfaces@2020-06-01' = {
-  name: networkInterfaceName_var
+@description('Specify number of VM instances to be created')
+param VirtualMachineCount int = 3
+
+param virtualMachineNamePrefix string
+
+var sqlVMNames = [for i in range(1, VirtualMachineCount): '${virtualMachineNamePrefix}-${i}']
+
+resource sqlnetworkInterfaceName 'Microsoft.Network/networkInterfaces@2020-06-01' = [for (vm, i) in sqlVMNames: {
+  name: 'nic-${vm}'
   location: location
   properties: {
     ipConfigurations: [
@@ -290,10 +297,11 @@ resource sqlnetworkInterfaceName 'Microsoft.Network/networkInterfaces@2020-06-01
   dependsOn: [
     VNet
   ]
-}
+}]
 
-resource sqlvirtualMachineName_resource 'Microsoft.Compute/virtualMachines@2020-06-01' = {
-  name: sqlvirtualMachineName
+
+resource sqlvirtualMachineName_resource 'Microsoft.Compute/virtualMachines@2020-06-01' = [for (vm, i) in sqlVMNames: {
+  name: 'sqlVM-${vm}'
   location: location
   properties: {
     hardwareProfile: {
@@ -326,7 +334,7 @@ resource sqlvirtualMachineName_resource 'Microsoft.Compute/virtualMachines@2020-
     networkProfile: {
       networkInterfaces: [
         {
-          id: sqlnetworkInterfaceName.id
+          id: resourceId('Microsoft.Network/networkInterfaces', 'nic-${vm}')
         }
       ]
     }
@@ -343,11 +351,10 @@ resource sqlvirtualMachineName_resource 'Microsoft.Compute/virtualMachines@2020-
   dependsOn: [
     UpdateVNetDNS
   ]
-}
+}]
 
-resource sqlvirtualMachineExtension 'Microsoft.Compute/virtualMachines/extensions@2021-03-01' = {
-  parent: sqlvirtualMachineName_resource
-  name: 'sqljoindomain'
+resource sqlvirtualMachineExtension 'Microsoft.Compute/virtualMachines/extensions@2021-03-01' = [for (vm, i) in sqlVMNames: {
+  name: 'sqlVM-${vm}/joindomain'
   location: location
   properties: {
     publisher: 'Microsoft.Compute'
@@ -365,14 +372,17 @@ resource sqlvirtualMachineExtension 'Microsoft.Compute/virtualMachines/extension
       Password: adminPassword
     }
   }
-}
+  dependsOn: [
+    sqlvirtualMachineName_resource
+  ]
+}]
 
 
-resource Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName 'Microsoft.SqlVirtualMachine/sqlVirtualMachines@2017-03-01-preview' = {
-  name: sqlvirtualMachineName
+resource Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName 'Microsoft.SqlVirtualMachine/sqlVirtualMachines@2017-03-01-preview' = [for (vm, i) in sqlVMNames: {
+  name: 'sqlVM-${vm}'
   location: location
   properties: {
-    virtualMachineResourceId: sqlvirtualMachineName_resource.id
+    virtualMachineResourceId: resourceId('Microsoft.Compute/virtualMachines', 'sqlVM-${vm}')
     sqlManagement: 'Full'
     sqlServerLicenseType: 'PAYG'
     storageConfigurationSettings: {
@@ -394,6 +404,6 @@ resource Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName 'Micr
   dependsOn: [
     sqlvirtualMachineExtension
   ]
-}
+}]
 
 output sqladminUsername string = sqladminUsername
