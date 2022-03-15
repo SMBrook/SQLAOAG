@@ -51,6 +51,13 @@ param sqlsubnetrange string = '10.100.1.0/24'
 @description('Availability set name.')
 param availabilitySetName string = 'adAvailabiltySet'
 
+@description('Bastion name.')
+param bastionHostName string = 'sqlaoagbastion'
+
+@description('Bastion subnet.')
+param bastionSubnetIpPrefix string = '10.100.2.0/24'
+
+
 resource availabilitySetName_resource 'Microsoft.Compute/availabilitySets@2019-03-01' = {
   location: location
   name: availabilitySetName
@@ -75,6 +82,22 @@ module VNet 'modules/VNET.bicep'= {
     location: location
   }
 }
+
+module bastion 'modules/bastion.bicep'= {
+  name: 'bastion'
+  params: {
+    bastionHostName: bastionHostName
+    bastionSubnetIpPrefix: bastionSubnetIpPrefix
+    vnetName: virtualNetworkName
+    vnetIpPrefix: virtualNetworkAddressRange
+    location: location
+  }
+  dependsOn: [
+    VNet
+    UpdateVNetDNS
+  ]
+}
+
 
 resource networkInterfaceName_resource 'Microsoft.Network/networkInterfaces@2019-02-01' = {
   name: networkInterfaceName
