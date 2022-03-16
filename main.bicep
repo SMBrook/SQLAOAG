@@ -546,7 +546,7 @@ resource FailoverClusterName_Listener 'Microsoft.SqlVirtualMachine/SqlVirtualMac
         }
         loadBalancerResourceId: lb.id
         probePort: ProbePort
-        sqlVirtualMachineInstances: [for (vm, i) in sqlVMNames: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, 'sqlVM-${vm}')]
+        sqlVirtualMachineInstances: [for (vm, i) in sqlVMNames: resourceId('Microsoft.SqlVirtualMachine/sqlVirtualMachines','sqlVM-${vm}')]
       } 
     ]
     port: ListenerPort
