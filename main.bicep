@@ -533,6 +533,7 @@ resource lb 'Microsoft.Network/loadBalancers@2020-05-01' = {
 
 //Failing from here, mainly I suspect because of line 549 which needs a list of the deployed vms in a comma delimited fashion, may need an array?
 
+/*
 resource FailoverClusterName_Listener 'Microsoft.SqlVirtualMachine/SqlVirtualMachineGroups/availabilityGroupListeners@2017-03-01-preview' = {
   name: '${failoverClusterName}/${Listener}'
   properties: {
@@ -555,7 +556,7 @@ resource FailoverClusterName_Listener 'Microsoft.SqlVirtualMachine/SqlVirtualMac
     Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName
   ]
 }
-
+*/
 
 
 
