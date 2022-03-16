@@ -1,19 +1,52 @@
-param DNSServerAddress array
+@description('The name of the Virtual Network to Create')
 param virtualNetworkName string
 
+@description('The address range of the new VNET in CIDR format')
+param virtualNetworkAddressRange string
 
-resource existingVirtualNetwork 'Microsoft.Network/virtualNetworks@2020-05-01' existing =  {
-  name: virtualNetworkName
-}
+@description('The name of the subnet created in the new VNET')
+param adsubnetname string
 
-resource dns 'Microsoft.Network/virtualNetworks@2020-05-01' = {
+@description('The address range of the subnet created in the new VNET')
+param adsubnetrange string
+
+@description('The name of the subnet created in the new VNET')
+param sqlsubnetname string
+
+@description('The address range of the subnet created in the new VNET')
+param sqlsubnetrange string
+
+@description('The DNS address(es) of the DNS Server(s) used by the VNET')
+param DNSServerAddress array
+
+@description('Location for all resources.')
+param location string
+
+resource virtualNetworkName_resource 'Microsoft.Network/virtualNetworks@2020-08-01' = {
   name: virtualNetworkName
+  location: location
   properties: {
+    addressSpace: {
+      addressPrefixes: [
+        virtualNetworkAddressRange
+      ]
+    }
     dhcpOptions: {
       dnsServers: DNSServerAddress
     }
+    subnets: [
+      {
+        name: adsubnetname
+        properties: {
+          addressPrefix: adsubnetrange
+        }
+      }
+      {
+        name: sqlsubnetname
+        properties: {
+          addressPrefix: sqlsubnetrange
+        }
+      }
+    ]
   }
-  dependsOn: [
-    existingVirtualNetwork
-  ]
 }

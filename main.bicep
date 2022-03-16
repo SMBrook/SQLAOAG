@@ -57,6 +57,15 @@ param bastionHostName string = 'sqlaoagbastion'
 @description('Bastion subnet.')
 param bastionSubnetIpPrefix string = '10.100.2.0/24'
 
+@maxLength(15)
+@description('Specify the Windows Failover Cluster Name')
+param failoverClusterName string = 'sqlcluster01'
+
+@description('Specify an optional Organizational Unit (OU) on AD Domain where the CNO (Computer Object for Cluster Name) will be created (e.g. OU=testou,OU=testou2,DC=contoso,DC=com). Default is empty.')
+param existingOuPath string = ''
+
+@description('Specify the name of the storage account to be used for creating Cloud Witness for Windows server failover cluster')
+param cloudWitnessName string = 'clwitness${uniqueString(resourceGroup().id)}'
 
 resource availabilitySetName_resource 'Microsoft.Compute/availabilitySets@2019-03-01' = {
   location: location
@@ -205,6 +214,12 @@ resource virtualMachineName_CreateADForest 'Microsoft.Compute/virtualMachines/ex
 module UpdateVNetDNS 'modules/vnet-with-dns-server.bicep' /*TODO: replace with correct path to [uri(parameters('_artifactsLocation'), concat('nestedtemplates/vnet-with-dns-server.json', parameters('_artifactsLocationSasToken')))]*/ = {
   name: 'UpdateVNetDNS'
   params: {
+    adsubnetname:adsubnetname
+    adsubnetrange:adsubnetrange
+    sqlsubnetname:sqlsubnetname
+    sqlsubnetrange:sqlsubnetrange
+    location:location
+    virtualNetworkAddressRange: virtualNetworkAddressRange
     virtualNetworkName: virtualNetworkName
     DNSServerAddress: [
       privateIPAddress
@@ -214,9 +229,6 @@ module UpdateVNetDNS 'modules/vnet-with-dns-server.bicep' /*TODO: replace with c
     virtualMachineName_CreateADForest
   ]
 }
-
-@description('The name of the VM')
-param sqlvirtualMachineName string = 'sql1'
 
 @description('The virtual machine size.')
 param virtualMachineSize string = 'Standard_D8s_v3'
@@ -355,7 +367,7 @@ resource sqlvirtualMachineName_resource 'Microsoft.Compute/virtualMachines@2020-
       ]
     }
     osProfile: {
-      computerName: sqlvirtualMachineName
+      computerName: 'sqlVM-${vm}'
       adminUsername: sqladminUsername
       adminPassword: sqladminPassword
       windowsConfiguration: {
@@ -393,51 +405,6 @@ resource sqlvirtualMachineExtension 'Microsoft.Compute/virtualMachines/extension
   ]
 }]
 
-
-resource Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName 'Microsoft.SqlVirtualMachine/sqlVirtualMachines@2017-03-01-preview' = [for (vm, i) in sqlVMNames: {
-  name: 'sqlVM-${vm}'
-  location: location
-  properties: {
-    virtualMachineResourceId: resourceId('Microsoft.Compute/virtualMachines', 'sqlVM-${vm}')
-    sqlManagement: 'Full'
-    sqlServerLicenseType: 'PAYG'
-    storageConfigurationSettings: {
-      diskConfigurationType: diskConfigurationType
-      storageWorkloadType: storageWorkloadType
-      sqlDataSettings: {
-        luns: dataDisksLuns
-        defaultFilePath: dataPath
-      }
-      sqlLogSettings: {
-        luns: logDisksLuns
-        defaultFilePath: logPath
-      }
-      sqlTempDbSettings: {
-        defaultFilePath: tempDbPath
-      }
-    }
-  }
-  dependsOn: [
-    sqlvirtualMachineExtension
-  ]
-}]
-
-output sqladminUsername string = sqladminUsername
-
-
-@maxLength(15)
-@description('Specify the Windows Failover Cluster Name')
-param failoverClusterName string = 'sqlcluster01'
-
-@description('Specify resourcegroup name for existing Vms.')
-param existingVmResourceGroup string = resourceGroup().name
-
-@description('Specify an optional Organizational Unit (OU) on AD Domain where the CNO (Computer Object for Cluster Name) will be created (e.g. OU=testou,OU=testou2,DC=contoso,DC=com). Default is empty.')
-param existingOuPath string = ''
-
-@description('Specify the name of the storage account to be used for creating Cloud Witness for Windows server failover cluster')
-param cloudWitnessName string = 'clwitness${uniqueString(resourceGroup().id)}'
-
 resource cloudWitnessName_resource 'Microsoft.Storage/storageAccounts@2018-07-01' = {
   name: cloudWitnessName
   sku: {
@@ -450,7 +417,7 @@ resource cloudWitnessName_resource 'Microsoft.Storage/storageAccounts@2018-07-01
     supportsHttpsTrafficOnly: true
   }
   dependsOn: [
-    Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName
+    sqlvirtualMachineExtension
   ]
 }
 
@@ -470,19 +437,59 @@ resource failoverClusterName_resource 'Microsoft.SqlVirtualMachine/SqlVirtualMac
       storageAccountPrimaryKey: listKeys(cloudWitnessName_resource.id, '2018-07-01').keys[0].value
     }
   }
+  dependsOn: [
+    sqlvirtualMachineExtension
+  ]
 }
 
-resource existingVirtualMachineNames_resource 'Microsoft.SqlVirtualMachine/SqlVirtualMachines@2017-03-01-preview' = [for (vm, i) in sqlVMNames: {
-  name: 'sqlfoc-${vm}'
+resource Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName 'Microsoft.SqlVirtualMachine/sqlVirtualMachines@2017-03-01-preview' = [for (vm, i) in sqlVMNames: {
+  name: 'sqlVM-${vm}'
   location: location
-  properties: {
-    virtualMachineResourceId: resourceId(existingVmResourceGroup, 'Microsoft.Compute/virtualMachines', 'sqlVM-${vm}')
+  properties: {  
+    virtualMachineResourceId: resourceId('Microsoft.Compute/virtualMachines', 'sqlVM-${vm}')
+    sqlManagement: 'Full'
     sqlServerLicenseType: 'PAYG'
-    sqlVirtualMachineGroupResourceId: failoverClusterName_resource.id
-    wsfcDomainCredentials: {
-      clusterBootstrapAccountPassword: adminPassword
-      clusterOperatorAccountPassword: adminPassword
-      sqlServiceAccountPassword: adminPassword
+    storageConfigurationSettings: {
+      diskConfigurationType: diskConfigurationType
+      storageWorkloadType: storageWorkloadType
+      sqlDataSettings: {
+        luns: dataDisksLuns
+        defaultFilePath: dataPath
+      }
+      sqlLogSettings: {
+        luns: logDisksLuns
+        defaultFilePath: logPath
+      }
+      sqlTempDbSettings: {
+        defaultFilePath: tempDbPath
+      }
     }
-  }
+}
+dependsOn: [
+  failoverClusterName_resource
+]
 }]
+
+module joincluster 'modules/join-cluster.bicep' = [for (vm, i) in sqlVMNames: {
+  name:'sqlVM-${vm}'
+  params:{
+    name: 'sqlVM-${vm}'
+    location: location
+    sqlServicePassword: sqladminPassword
+    domainAccountPassword: adminPassword
+    sqlServerLicenseType: 'PAYG'
+    groupResourceId: failoverClusterName_resource.id
+    virtualMachineResourceId: resourceId('Microsoft.Compute/virtualMachines', 'sqlVM-${vm}')
+  }
+  dependsOn:[
+    Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName
+  ]
+}]
+
+
+
+
+
+
+
+
