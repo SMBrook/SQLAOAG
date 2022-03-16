@@ -12,7 +12,7 @@ param domainName string = 'testcorp.local'
 param vmSize string = 'Standard_D2s_v3'
 
 @description('The location of resources, such as templates and DSC modules, that the template depends on')
-param artifactsLocation string = 'https://raw.githubusercontent.com/SMBrook/SQLAOAG/AOAGSMB/'
+param artifactsLocation string = 'https://raw.githubusercontent.com/SMBrook/SQLAOAG/main/'
 
 @description('Auto-generated token to access _artifactsLocation. Leave it blank unless you need to provide your own value.')
 @secure()
@@ -439,37 +439,11 @@ param failoverClusterName string = 'sqlcluster01'
 @description('Specify resourcegroup name for existing Vms.')
 param existingVmResourceGroup string = resourceGroup().name
 
-@description('Specify the Fully Qualified Domain Name under which the Failover Cluster will be created. The VM\'s should already be joined to it. (e.g. contoso.com)')
-param existingFullyQualifiedDomainName string
-
 @description('Specify an optional Organizational Unit (OU) on AD Domain where the CNO (Computer Object for Cluster Name) will be created (e.g. OU=testou,OU=testou2,DC=contoso,DC=com). Default is empty.')
 param existingOuPath string = ''
 
-@description('Specify the account for WS failover cluster creation in UPN format (e.g. example@contoso.com). This account can either be a Domain Admin or at least have permissions to create Computer Objects in default or specified OU.')
-param existingDomainAccount string
-
-@description('Specify the password for the domain account')
-@secure()
-param domainAccountPassword string
-
-@description('Specify the domain account under which SQL Server service will run for AG setup in UPN format (e.g. sqlservice@contoso.com)')
-param existingSqlServiceAccount string
-
-@description('Specify the password for Sql Server service account')
-@secure()
-param sqlServicePassword string
-
 @description('Specify the name of the storage account to be used for creating Cloud Witness for Windows server failover cluster')
 param cloudWitnessName string = 'clwitness${uniqueString(resourceGroup().id)}'
-
-resource existingVMListArray 'Microsoft.SqlVirtualMachine/SqlVirtualMachines@2017-03-01-preview' = [for (vm, i) in sqlVMNames: {
-  name: trim(vm)
-  location: location
-  properties: {
-    virtualMachineResourceId: resourceId(existingVmResourceGroup, 'Microsoft.Compute/virtualMachines', trim(vm))
-    sqlServerLicenseType: 'PAYG'
-  }
-}]
 
 resource cloudWitnessName_resource 'Microsoft.Storage/storageAccounts@2018-07-01' = {
   name: cloudWitnessName
@@ -482,6 +456,9 @@ resource cloudWitnessName_resource 'Microsoft.Storage/storageAccounts@2018-07-01
     accessTier: 'Hot'
     supportsHttpsTrafficOnly: true
   }
+  dependsOn: [
+    Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName
+  ]
 }
 
 resource failoverClusterName_resource 'Microsoft.SqlVirtualMachine/SqlVirtualMachineGroups@2017-03-01-preview' = {
@@ -491,11 +468,11 @@ resource failoverClusterName_resource 'Microsoft.SqlVirtualMachine/SqlVirtualMac
     sqlImageOffer: imageOffer
     sqlImageSku: 'Developer'
     wsfcDomainProfile: {
-      domainFqdn: existingFullyQualifiedDomainName
+      domainFqdn: domainName
       ouPath: existingOuPath
-      clusterBootstrapAccount: existingDomainAccount
-      clusterOperatorAccount: existingDomainAccount
-      sqlServiceAccount: existingSqlServiceAccount
+      clusterBootstrapAccount: '${adminUsername}@${domainName}'
+      clusterOperatorAccount: '${adminUsername}@${domainName}'
+      sqlServiceAccount: '${adminUsername}@${domainName}'
       storageAccountUrl: reference(cloudWitnessName_resource.id, '2018-07-01').primaryEndpoints.blob
       storageAccountPrimaryKey: listKeys(cloudWitnessName_resource.id, '2018-07-01').keys[0].value
     }
@@ -510,9 +487,9 @@ resource existingVirtualMachineNames_resource 'Microsoft.SqlVirtualMachine/SqlVi
     sqlServerLicenseType: 'PAYG'
     sqlVirtualMachineGroupResourceId: failoverClusterName_resource.id
     wsfcDomainCredentials: {
-      clusterBootstrapAccountPassword: domainAccountPassword
-      clusterOperatorAccountPassword: domainAccountPassword
-      sqlServiceAccountPassword: sqlServicePassword
+      clusterBootstrapAccountPassword: adminPassword
+      clusterOperatorAccountPassword: adminPassword
+      sqlServiceAccountPassword: adminPassword
     }
   }
 }]
