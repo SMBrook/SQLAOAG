@@ -67,169 +67,6 @@ param existingOuPath string = ''
 @description('Specify the name of the storage account to be used for creating Cloud Witness for Windows server failover cluster')
 param cloudWitnessName string = 'clwitness${uniqueString(resourceGroup().id)}'
 
-resource availabilitySetName_resource 'Microsoft.Compute/availabilitySets@2019-03-01' = {
-  location: location
-  name: availabilitySetName
-  properties: {
-    platformUpdateDomainCount: 20
-    platformFaultDomainCount: 2
-  }
-  sku: {
-    name: 'Aligned'
-  }
-}
-
-module VNet 'modules/VNET.bicep'= {
-  name: 'VNet'
-  params: {
-    virtualNetworkName: virtualNetworkName
-    virtualNetworkAddressRange: virtualNetworkAddressRange
-    adsubnetname: adsubnetname
-    adsubnetrange: adsubnetrange
-    sqlsubnetname: sqlsubnetname
-    sqlsubnetrange: sqlsubnetrange
-    location: location
-  }
-}
-
-module bastion 'modules/bastion.bicep'= {
-  name: 'bastion'
-  params: {
-    bastionHostName: bastionHostName
-    bastionSubnetIpPrefix: bastionSubnetIpPrefix
-    vnetName: virtualNetworkName
-    vnetIpPrefix: virtualNetworkAddressRange
-    location: location
-  }
-  dependsOn: [
-    VNet
-    UpdateVNetDNS
-  ]
-}
-
-
-resource networkInterfaceName_resource 'Microsoft.Network/networkInterfaces@2019-02-01' = {
-  name: networkInterfaceName
-  location: location
-  properties: {
-    ipConfigurations: [
-      {
-        name: 'ipconfig1'
-        properties: {
-          privateIPAllocationMethod: 'Static'
-          privateIPAddress: privateIPAddress
-          subnet: {
-            id: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, adsubnetname)
-          }
-        }
-      }
-    ]
-  }
-  dependsOn: [
-    VNet
-  ]
-}
-
-resource virtualMachineName_resource 'Microsoft.Compute/virtualMachines@2019-03-01' = {
-  name: virtualMachineName
-  location: location
-  properties: {
-    hardwareProfile: {
-      vmSize: vmSize
-    }
-    availabilitySet: {
-      id: availabilitySetName_resource.id
-    }
-    osProfile: {
-      computerName: virtualMachineName
-      adminUsername: adminUsername
-      adminPassword: adminPassword
-    }
-    storageProfile: {
-      imageReference: {
-        publisher: 'MicrosoftWindowsServer'
-        offer: 'WindowsServer'
-        sku: '2019-Datacenter'
-        version: 'latest'
-      }
-      osDisk: {
-        name: '${virtualMachineName}_OSDisk'
-        caching: 'ReadOnly'
-        createOption: 'FromImage'
-        managedDisk: {
-          storageAccountType: 'StandardSSD_LRS'
-        }
-      }
-      dataDisks: [
-        {
-          name: '${virtualMachineName}_DataDisk'
-          caching: 'ReadWrite'
-          createOption: 'Empty'
-          diskSizeGB: 20
-          managedDisk: {
-            storageAccountType: 'StandardSSD_LRS'
-          }
-          lun: 0
-        }
-      ]
-    }
-    networkProfile: {
-      networkInterfaces: [
-        {
-          id: networkInterfaceName_resource.id
-        }
-      ]
-    }
-  }
-}
-
-resource virtualMachineName_CreateADForest 'Microsoft.Compute/virtualMachines/extensions@2019-03-01' = {
-  parent: virtualMachineName_resource
-  name: 'CreateADForest'
-  location: location
-  properties: {
-    publisher: 'Microsoft.Powershell'
-    type: 'DSC'
-    typeHandlerVersion: '2.19'
-    autoUpgradeMinorVersion: true
-    settings: {
-      ModulesUrl: uri(artifactsLocation, 'DSC/CreateADPDC.zip${artifactsLocationSasToken}')
-      ConfigurationFunction: 'CreateADPDC.ps1\\CreateADPDC'
-      Properties: {
-        DomainName: domainName
-        AdminCreds: {
-          UserName: adminUsername
-          Password: 'PrivateSettingsRef:AdminPassword'
-        }
-      }
-    }
-    protectedSettings: {
-      Items: {
-        AdminPassword: adminPassword
-      }
-    }
-  }
-}
-
-module UpdateVNetDNS 'modules/vnet-with-dns-server.bicep' /*TODO: replace with correct path to [uri(parameters('_artifactsLocation'), concat('nestedtemplates/vnet-with-dns-server.json', parameters('_artifactsLocationSasToken')))]*/ = {
-  name: 'UpdateVNetDNS'
-  params: {
-    adsubnetname:adsubnetname
-    adsubnetrange:adsubnetrange
-    sqlsubnetname:sqlsubnetname
-    sqlsubnetrange:sqlsubnetrange
-    location:location
-    virtualNetworkAddressRange: virtualNetworkAddressRange
-    virtualNetworkName: virtualNetworkName
-    DNSServerAddress: [
-      privateIPAddress
-    ]
-  }
-  dependsOn: [
-    virtualMachineName_CreateADForest
-  ]
-}
-
 @description('The virtual machine size.')
 param virtualMachineSize string = 'Standard_D8s_v3'
 
@@ -305,6 +142,194 @@ param virtualMachineNamePrefix string ='sql'
 
 var sqlVMNames = [for i in range(1, VirtualMachineCount): '${virtualMachineNamePrefix}-${i}']
 
+@description('Specify a name for the listener for SQL Availability Group')
+param Listener string = 'aglistener'
+
+@description('Specify the port for listener')
+param ListenerPort int = 1433
+
+@description('Specify the available private IP address for the listener from the subnet the existing Vms are part of.')
+param ListenerIp string = '10.100.1.7'
+
+@description('Specify the load balancer port number (e.g. 59999)')
+param ProbePort int = 59999
+
+//Create AVSet for DC - No longer needed?
+
+resource availabilitySetName_resource 'Microsoft.Compute/availabilitySets@2019-03-01' = {
+  location: location
+  name: availabilitySetName
+  properties: {
+    platformUpdateDomainCount: 20
+    platformFaultDomainCount: 2
+  }
+  sku: {
+    name: 'Aligned'
+  }
+}
+
+//Create VNET
+
+module VNet 'modules/VNET.bicep'= {
+  name: 'VNet'
+  params: {
+    virtualNetworkName: virtualNetworkName
+    virtualNetworkAddressRange: virtualNetworkAddressRange
+    adsubnetname: adsubnetname
+    adsubnetrange: adsubnetrange
+    sqlsubnetname: sqlsubnetname
+    sqlsubnetrange: sqlsubnetrange
+    location: location
+  }
+}
+
+//Create Bastion Host
+module bastion 'modules/bastion.bicep'= {
+  name: 'bastion'
+  params: {
+    bastionHostName: bastionHostName
+    bastionSubnetIpPrefix: bastionSubnetIpPrefix
+    vnetName: virtualNetworkName
+    vnetIpPrefix: virtualNetworkAddressRange
+    location: location
+  }
+  dependsOn: [
+    VNet
+    UpdateVNetDNS
+  ]
+}
+
+//Create DC Nic
+
+resource networkInterfaceName_resource 'Microsoft.Network/networkInterfaces@2019-02-01' = {
+  name: networkInterfaceName
+  location: location
+  properties: {
+    ipConfigurations: [
+      {
+        name: 'ipconfig1'
+        properties: {
+          privateIPAllocationMethod: 'Static'
+          privateIPAddress: privateIPAddress
+          subnet: {
+            id: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, adsubnetname)
+          }
+        }
+      }
+    ]
+  }
+  dependsOn: [
+    VNet
+  ]
+}
+
+//Create Domain Controller VM
+
+resource virtualMachineName_resource 'Microsoft.Compute/virtualMachines@2019-03-01' = {
+  name: virtualMachineName
+  location: location
+  properties: {
+    hardwareProfile: {
+      vmSize: vmSize
+    }
+    availabilitySet: {
+      id: availabilitySetName_resource.id
+    }
+    osProfile: {
+      computerName: virtualMachineName
+      adminUsername: adminUsername
+      adminPassword: adminPassword
+    }
+    storageProfile: {
+      imageReference: {
+        publisher: 'MicrosoftWindowsServer'
+        offer: 'WindowsServer'
+        sku: '2019-Datacenter'
+        version: 'latest'
+      }
+      osDisk: {
+        name: '${virtualMachineName}_OSDisk'
+        caching: 'ReadOnly'
+        createOption: 'FromImage'
+        managedDisk: {
+          storageAccountType: 'StandardSSD_LRS'
+        }
+      }
+      dataDisks: [
+        {
+          name: '${virtualMachineName}_DataDisk'
+          caching: 'ReadWrite'
+          createOption: 'Empty'
+          diskSizeGB: 20
+          managedDisk: {
+            storageAccountType: 'StandardSSD_LRS'
+          }
+          lun: 0
+        }
+      ]
+    }
+    networkProfile: {
+      networkInterfaces: [
+        {
+          id: networkInterfaceName_resource.id
+        }
+      ]
+    }
+  }
+}
+
+//Create AD Forest
+
+resource virtualMachineName_CreateADForest 'Microsoft.Compute/virtualMachines/extensions@2019-03-01' = {
+  parent: virtualMachineName_resource
+  name: 'CreateADForest'
+  location: location
+  properties: {
+    publisher: 'Microsoft.Powershell'
+    type: 'DSC'
+    typeHandlerVersion: '2.19'
+    autoUpgradeMinorVersion: true
+    settings: {
+      ModulesUrl: uri(artifactsLocation, 'DSC/CreateADPDC.zip${artifactsLocationSasToken}')
+      ConfigurationFunction: 'CreateADPDC.ps1\\CreateADPDC'
+      Properties: {
+        DomainName: domainName
+        AdminCreds: {
+          UserName: adminUsername
+          Password: 'PrivateSettingsRef:AdminPassword'
+        }
+      }
+    }
+    protectedSettings: {
+      Items: {
+        AdminPassword: adminPassword
+      }
+    }
+  }
+}
+
+//Update VNET DNS Setting to point to new DC
+module UpdateVNetDNS 'modules/vnet-with-dns-server.bicep' /*TODO: replace with correct path to [uri(parameters('_artifactsLocation'), concat('nestedtemplates/vnet-with-dns-server.json', parameters('_artifactsLocationSasToken')))]*/ = {
+  name: 'UpdateVNetDNS'
+  params: {
+    adsubnetname:adsubnetname
+    adsubnetrange:adsubnetrange
+    sqlsubnetname:sqlsubnetname
+    sqlsubnetrange:sqlsubnetrange
+    location:location
+    virtualNetworkAddressRange: virtualNetworkAddressRange
+    virtualNetworkName: virtualNetworkName
+    DNSServerAddress: [
+      privateIPAddress
+    ]
+  }
+  dependsOn: [
+    virtualMachineName_CreateADForest
+  ]
+}
+
+//Create SQL VM Nics
+
 resource sqlnetworkInterfaceName 'Microsoft.Network/networkInterfaces@2020-06-01' = [for (vm, i) in sqlVMNames: {
   name: 'nic-${vm}'
   location: location
@@ -327,6 +352,7 @@ resource sqlnetworkInterfaceName 'Microsoft.Network/networkInterfaces@2020-06-01
   ]
 }]
 
+//Create SQL VMs
 
 resource sqlvirtualMachineName_resource 'Microsoft.Compute/virtualMachines@2020-06-01' = [for (vm, i) in sqlVMNames: {
   name: 'sqlVM-${vm}'
@@ -381,6 +407,8 @@ resource sqlvirtualMachineName_resource 'Microsoft.Compute/virtualMachines@2020-
   ]
 }]
 
+//Join SQL Servers to AD Domain
+
 resource sqlvirtualMachineExtension 'Microsoft.Compute/virtualMachines/extensions@2021-03-01' = [for (vm, i) in sqlVMNames: {
   name: 'sqlVM-${vm}/joindomain'
   location: location
@@ -405,6 +433,8 @@ resource sqlvirtualMachineExtension 'Microsoft.Compute/virtualMachines/extension
   ]
 }]
 
+//Create Failover Cluster Witness Storage Account
+
 resource cloudWitnessName_resource 'Microsoft.Storage/storageAccounts@2018-07-01' = {
   name: cloudWitnessName
   sku: {
@@ -420,6 +450,8 @@ resource cloudWitnessName_resource 'Microsoft.Storage/storageAccounts@2018-07-01
     sqlvirtualMachineExtension
   ]
 }
+
+//Create Failover Cluster
 
 resource failoverClusterName_resource 'Microsoft.SqlVirtualMachine/SqlVirtualMachineGroups@2017-03-01-preview' = {
   name: failoverClusterName
@@ -441,6 +473,8 @@ resource failoverClusterName_resource 'Microsoft.SqlVirtualMachine/SqlVirtualMac
     sqlvirtualMachineExtension
   ]
 }
+
+//Create SQL VM Resources in Azure and add to Failover Cluster
 
 resource Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName 'Microsoft.SqlVirtualMachine/sqlVirtualMachines@2017-03-01-preview' = [for (vm, i) in sqlVMNames: {
   name: 'sqlVM-${vm}'
@@ -473,34 +507,6 @@ resource Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName 'Micr
 }
 }]
 
-/*module joincluster 'modules/join-cluster.bicep' = [for (vm, i) in sqlVMNames: {
-  name:'sqlVM-${vm}'
-  params:{
-    name: 'sqlVM-${vm}'
-    location: location
-    sqlServicePassword: sqladminPassword
-    domainAccountPassword: adminPassword
-    sqlServerLicenseType: 'PAYG'
-    groupResourceId: failoverClusterName_resource.id
-    virtualMachineResourceId: resourceId('Microsoft.Compute/virtualMachines', 'sqlVM-${vm}')
-  }
-  dependsOn:[
-    Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName
-  ]
-}]*/
-
-@description('Specify a name for the listener for SQL Availability Group')
-param Listener string = 'aglistener'
-
-@description('Specify the port for listener')
-param ListenerPort int = 1433
-
-@description('Specify the available private IP address for the listener from the subnet the existing Vms are part of.')
-param ListenerIp string = '10.100.1.7'
-
-@description('Specify the load balancer port number (e.g. 59999)')
-param ProbePort int = 59999
-
 resource lb 'Microsoft.Network/loadBalancers@2020-05-01' = {
   name: 'sqllb1'
   location: location
@@ -525,7 +531,9 @@ resource lb 'Microsoft.Network/loadBalancers@2020-05-01' = {
   ]
 }
 
-resource existingFailoverClusterName_Listener 'Microsoft.SqlVirtualMachine/SqlVirtualMachineGroups/availabilityGroupListeners@2017-03-01-preview' = {
+//Failing from here, mainly I suspect because of line 549 which needs a list of the deployed vms in a comma delimited fashion, may need an array?
+
+resource FailoverClusterName_Listener 'Microsoft.SqlVirtualMachine/SqlVirtualMachineGroups/availabilityGroupListeners@2017-03-01-preview' = {
   name: '${failoverClusterName}/${Listener}'
   properties: {
     availabilityGroupName: 'sqlaoag'
@@ -538,7 +546,7 @@ resource existingFailoverClusterName_Listener 'Microsoft.SqlVirtualMachine/SqlVi
         }
         loadBalancerResourceId: lb.id
         probePort: ProbePort
-        sqlVirtualMachineInstances: [for (vm, i) in sqlVMNames: 'sqlVM-${vm}']
+        sqlVirtualMachineInstances: [for (vm, i) in sqlVMNames: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, 'sqlVM-${vm}')]
       } 
     ]
     port: ListenerPort
