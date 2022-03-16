@@ -206,15 +206,9 @@ module UpdateVNetDNS 'modules/vnet-with-dns-server.bicep' /*TODO: replace with c
   name: 'UpdateVNetDNS'
   params: {
     virtualNetworkName: virtualNetworkName
-    virtualNetworkAddressRange: virtualNetworkAddressRange
-    adsubnetname: adsubnetname
-    adsubnetrange: adsubnetrange
-    sqlsubnetname: sqlsubnetname
-    sqlsubnetrange: sqlsubnetrange
     DNSServerAddress: [
       privateIPAddress
     ]
-    location: location
   }
   dependsOn: [
     virtualMachineName_CreateADForest
@@ -280,7 +274,6 @@ param sqlLogDisksCount int = 2
 @description('Path for SQL Log files. Please choose drive letter from F to Z and different than the one used for SQL data. Drive letter from A to E are reserved for system')
 param logPath string = 'G:\\SQLLog'
 
-var networkInterfaceName_var = '${sqlvirtualMachineName}-nic'
 var diskConfigurationType = 'NEW'
 var dataDisksLuns = array(range(0, sqlDataDisksCount))
 var logDisksLuns = array(range(sqlDataDisksCount, sqlLogDisksCount))
@@ -296,7 +289,7 @@ var tempDbPath = 'D:\\SQLTemp'
 @description('Specify number of VM instances to be created')
 param VirtualMachineCount int = 3
 
-param virtualMachineNamePrefix string
+param virtualMachineNamePrefix string ='sql'
 
 var sqlVMNames = [for i in range(1, VirtualMachineCount): '${virtualMachineNamePrefix}-${i}']
 
@@ -480,10 +473,10 @@ resource failoverClusterName_resource 'Microsoft.SqlVirtualMachine/SqlVirtualMac
 }
 
 resource existingVirtualMachineNames_resource 'Microsoft.SqlVirtualMachine/SqlVirtualMachines@2017-03-01-preview' = [for (vm, i) in sqlVMNames: {
-  name: trim(vm)
+  name: 'sqlfoc-${vm}'
   location: location
   properties: {
-    virtualMachineResourceId: resourceId(existingVmResourceGroup, 'Microsoft.Compute/virtualMachines', trim(vm))
+    virtualMachineResourceId: resourceId(existingVmResourceGroup, 'Microsoft.Compute/virtualMachines', 'sqlVM-${vm}')
     sqlServerLicenseType: 'PAYG'
     sqlVirtualMachineGroupResourceId: failoverClusterName_resource.id
     wsfcDomainCredentials: {
