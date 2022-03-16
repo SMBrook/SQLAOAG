@@ -149,7 +149,7 @@ param Listener string = 'aglistener'
 param ListenerPort int = 1433
 
 @description('Specify the available private IP address for the listener from the subnet the existing Vms are part of.')
-param ListenerIp string = '10.100.1.7'
+param ListenerIp string = '10.100.1.8'
 
 @description('Specify the load balancer port number (e.g. 59999)')
 param ProbePort int = 59999
