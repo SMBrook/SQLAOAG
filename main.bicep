@@ -464,13 +464,16 @@ resource Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName 'Micr
         defaultFilePath: tempDbPath
       }
     }
+    sqlVirtualMachineGroupResourceId: failoverClusterName_resource.id
+    wsfcDomainCredentials: {
+      clusterBootstrapAccountPassword: sqladminPassword
+      clusterOperatorAccountPassword: sqladminPassword
+      sqlServiceAccountPassword: sqladminPassword
+    }
 }
-dependsOn: [
-  failoverClusterName_resource
-]
 }]
 
-module joincluster 'modules/join-cluster.bicep' = [for (vm, i) in sqlVMNames: {
+/*module joincluster 'modules/join-cluster.bicep' = [for (vm, i) in sqlVMNames: {
   name:'sqlVM-${vm}'
   params:{
     name: 'sqlVM-${vm}'
@@ -484,8 +487,66 @@ module joincluster 'modules/join-cluster.bicep' = [for (vm, i) in sqlVMNames: {
   dependsOn:[
     Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName
   ]
-}]
+}]*/
 
+@description('Specify a name for the listener for SQL Availability Group')
+param Listener string = 'aglistener'
+
+@description('Specify the port for listener')
+param ListenerPort int = 1433
+
+@description('Specify the available private IP address for the listener from the subnet the existing Vms are part of.')
+param ListenerIp string = '10.100.1.7'
+
+@description('Specify the load balancer port number (e.g. 59999)')
+param ProbePort int = 59999
+
+resource lb 'Microsoft.Network/loadBalancers@2020-05-01' = {
+  name: 'sqllb1'
+  location: location
+  sku: {
+    name: 'Standard'
+  }
+  properties: {
+    frontendIPConfigurations: [
+      {
+        name: 'LoadBalancerFrontEnd'
+        properties: {
+          privateIPAllocationMethod: 'Dynamic'
+          subnet: {
+            id: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, sqlsubnetname)
+          }
+        }
+      }
+    ]
+  }
+  dependsOn: [
+    sqlvirtualMachineExtension
+  ]
+}
+
+resource existingFailoverClusterName_Listener 'Microsoft.SqlVirtualMachine/SqlVirtualMachineGroups/availabilityGroupListeners@2017-03-01-preview' = {
+  name: '${failoverClusterName}/${Listener}'
+  properties: {
+    availabilityGroupName: 'sqlaoag'
+    createDefaultAvailabilityGroupIfNotExist: true
+    loadBalancerConfigurations: [
+      {
+        privateIpAddress: {
+          ipAddress: ListenerIp
+          subnetResourceId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, sqlsubnetname)
+        }
+        loadBalancerResourceId: lb.id
+        probePort: ProbePort
+        sqlVirtualMachineInstances: [for (vm, i) in sqlVMNames: 'sqlVM-${vm}']
+      } 
+    ]
+    port: ListenerPort
+  }
+  dependsOn: [
+    Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName
+  ]
+}
 
 
 
