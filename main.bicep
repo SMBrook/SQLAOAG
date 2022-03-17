@@ -533,13 +533,12 @@ resource lb 'Microsoft.Network/loadBalancers@2020-05-01' = {
 }
 
 //Failing from here, mainly I suspect because of line 549 which needs a list of the deployed vms in a comma delimited fashion, may need an array?
-
+/*
 var SqlVmResourceIdList = [for (vm, i) in sqlVMNames: resourceId('Microsoft.SqlVirtualMachine/sqlVirtualMachines','sqlVM-${vm}')]
 
 resource FailoverClusterName_Listener 'Microsoft.SqlVirtualMachine/SqlVirtualMachineGroups/availabilityGroupListeners@2017-03-01-preview' = {
   name: '${failoverClusterName}/${Listener}'
   properties: {
-    availabilityGroupName: 'sqlaoag'
     createDefaultAvailabilityGroupIfNotExist: true
     loadBalancerConfigurations: [
       {
@@ -559,7 +558,7 @@ resource FailoverClusterName_Listener 'Microsoft.SqlVirtualMachine/SqlVirtualMac
   ]
 }
 
-
+*/
 
 
 
