@@ -48,9 +48,6 @@ param sqlsubnetname string = 'SQLSubnet'
 @description('AD Subnet IP range.')
 param sqlsubnetrange string = '10.100.1.0/24'
 
-@description('Availability set name.')
-param availabilitySetName string = 'adAvailabiltySet'
-
 @description('Bastion name.')
 param bastionHostName string = 'sqlaoagbastion'
 
@@ -93,11 +90,11 @@ param imageOffer string = 'sql2019-ws2019'
 param sqlSku string = 'SQLDEV'
 
 @description('The admin user name of the VM')
-param sqladminUsername string
+param sqllocaladminUsername string
 
 @description('The admin password of the VM')
 @secure()
-param sqladminPassword string
+param sqllocaladminPassword string
 
 @allowed([
   'GENERAL'
@@ -142,7 +139,7 @@ param virtualMachineNamePrefix string ='sql'
 
 var sqlVMNames = [for i in range(1, VirtualMachineCount): '${virtualMachineNamePrefix}-${i}']
 
-@description('Specify a name for the listener for SQL Availability Group')
+/*@description('Specify a name for the listener for SQL Availability Group')
 param Listener string = 'aglistener'
 
 @description('Specify the port for listener')
@@ -152,10 +149,10 @@ param ListenerPort int = 1433
 param ListenerIp string = '10.100.1.8'
 
 @description('Specify the load balancer port number (e.g. 59999)')
-param ProbePort int = 59999
+param ProbePort int = 59999*/
 
 //Create AVSet for DC - No longer needed?
-
+/*
 resource availabilitySetName_resource 'Microsoft.Compute/availabilitySets@2019-03-01' = {
   location: location
   name: availabilitySetName
@@ -166,7 +163,7 @@ resource availabilitySetName_resource 'Microsoft.Compute/availabilitySets@2019-0
   sku: {
     name: 'Aligned'
   }
-}
+}*/
 
 //Create VNET
 
@@ -231,9 +228,6 @@ resource virtualMachineName_resource 'Microsoft.Compute/virtualMachines@2019-03-
   properties: {
     hardwareProfile: {
       vmSize: vmSize
-    }
-    availabilitySet: {
-      id: availabilitySetName_resource.id
     }
     osProfile: {
       computerName: virtualMachineName
@@ -394,8 +388,8 @@ resource sqlvirtualMachineName_resource 'Microsoft.Compute/virtualMachines@2020-
     }
     osProfile: {
       computerName: 'sqlVM-${vm}'
-      adminUsername: sqladminUsername
-      adminPassword: sqladminPassword
+      adminUsername: sqllocaladminUsername
+      adminPassword: sqllocaladminPassword
       windowsConfiguration: {
         enableAutomaticUpdates: true
         provisionVMAgent: true
@@ -500,9 +494,9 @@ resource Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName 'Micr
     }
     sqlVirtualMachineGroupResourceId: failoverClusterName_resource.id
     wsfcDomainCredentials: {
-      clusterBootstrapAccountPassword: sqladminPassword
-      clusterOperatorAccountPassword: sqladminPassword
-      sqlServiceAccountPassword: sqladminPassword
+      clusterBootstrapAccountPassword: adminPassword
+      clusterOperatorAccountPassword: adminPassword
+      sqlServiceAccountPassword: adminPassword
     }
 }
 }]
