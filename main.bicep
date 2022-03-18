@@ -190,6 +190,7 @@ module bastion 'modules/bastion.bicep'= if (deploybastion) {
   }
   dependsOn: [
     VNet
+    UpdateVNetDNS
   ]
 }
 
