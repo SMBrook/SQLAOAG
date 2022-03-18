@@ -21,20 +21,17 @@ param artifactsLocationSasToken string = ''
 @description('Location for all resources.')
 param location string = resourceGroup().location
 
-@description('Virtual machine name.')
-param virtualMachineName string = 'adVM'
+@description('Domain Controller Virtual machine name.')
+param advirtualMachineName string = 'adVM'
 
 @description('Virtual network name.')
-param virtualNetworkName string = 'adVNET'
+param virtualNetworkName string = 'SQLDevClusterVNET'
 
 @description('Virtual network address range.')
 param virtualNetworkAddressRange string = '10.100.0.0/16'
 
-@description('Network interface name.')
-param networkInterfaceName string = 'adNic'
-
-@description('Private IP address.')
-param privateIPAddress string = '10.100.0.4'
+@description('DC IP address.')
+param DCIPAddress string = '10.100.0.4'
 
 @description('Subnet name.')
 param adsubnetname string = 'ADSubnet'
@@ -89,10 +86,10 @@ param imageOffer string = 'sql2019-ws2019'
 @description('SQL Server Sku')
 param sqlSku string = 'SQLDEV'
 
-@description('The admin user name of the VM')
-param sqllocaladminUsername string
+@description('The admin user name of the SQL VMs')
+param sqllocaladminUsername string = 'sqlvmadmin'
 
-@description('The admin password of the VM')
+@description('The admin password of the SQL VMs')
 @secure()
 param sqllocaladminPassword string
 
@@ -139,6 +136,8 @@ param virtualMachineNamePrefix string ='sql'
 
 var sqlVMNames = [for i in range(1, VirtualMachineCount): '${virtualMachineNamePrefix}-${i}']
 
+param deploybastion bool = true
+
 /*@description('Specify a name for the listener for SQL Availability Group')
 param Listener string = 'aglistener'
 
@@ -181,25 +180,23 @@ module VNet 'modules/VNET.bicep'= {
 }
 
 //Create Bastion Host
-module bastion 'modules/bastion.bicep'= {
+module bastion 'modules/bastion.bicep'= if (deploybastion) {
   name: 'bastion'
   params: {
     bastionHostName: bastionHostName
     bastionSubnetIpPrefix: bastionSubnetIpPrefix
     vnetName: virtualNetworkName
-    vnetIpPrefix: virtualNetworkAddressRange
     location: location
   }
   dependsOn: [
     VNet
-    UpdateVNetDNS
   ]
 }
 
 //Create DC Nic
 
-resource networkInterfaceName_resource 'Microsoft.Network/networkInterfaces@2019-02-01' = {
-  name: networkInterfaceName
+resource dcnic 'Microsoft.Network/networkInterfaces@2019-02-01' = {
+  name: '${advirtualMachineName}-nic'
   location: location
   properties: {
     ipConfigurations: [
@@ -207,7 +204,7 @@ resource networkInterfaceName_resource 'Microsoft.Network/networkInterfaces@2019
         name: 'ipconfig1'
         properties: {
           privateIPAllocationMethod: 'Static'
-          privateIPAddress: privateIPAddress
+          privateIPAddress: DCIPAddress
           subnet: {
             id: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, adsubnetname)
           }
@@ -223,14 +220,14 @@ resource networkInterfaceName_resource 'Microsoft.Network/networkInterfaces@2019
 //Create Domain Controller VM
 
 resource virtualMachineName_resource 'Microsoft.Compute/virtualMachines@2019-03-01' = {
-  name: virtualMachineName
+  name: advirtualMachineName
   location: location
   properties: {
     hardwareProfile: {
       vmSize: vmSize
     }
     osProfile: {
-      computerName: virtualMachineName
+      computerName: advirtualMachineName
       adminUsername: adminUsername
       adminPassword: adminPassword
     }
@@ -242,7 +239,7 @@ resource virtualMachineName_resource 'Microsoft.Compute/virtualMachines@2019-03-
         version: 'latest'
       }
       osDisk: {
-        name: '${virtualMachineName}_OSDisk'
+        name: '${advirtualMachineName}_OSDisk'
         caching: 'ReadOnly'
         createOption: 'FromImage'
         managedDisk: {
@@ -251,7 +248,7 @@ resource virtualMachineName_resource 'Microsoft.Compute/virtualMachines@2019-03-
       }
       dataDisks: [
         {
-          name: '${virtualMachineName}_DataDisk'
+          name: '${advirtualMachineName}_DataDisk'
           caching: 'ReadWrite'
           createOption: 'Empty'
           diskSizeGB: 20
@@ -265,7 +262,7 @@ resource virtualMachineName_resource 'Microsoft.Compute/virtualMachines@2019-03-
     networkProfile: {
       networkInterfaces: [
         {
-          id: networkInterfaceName_resource.id
+          id: dcnic.id
         }
       ]
     }
@@ -303,7 +300,7 @@ resource virtualMachineName_CreateADForest 'Microsoft.Compute/virtualMachines/ex
 }
 
 //Update VNET DNS Setting to point to new DC
-module UpdateVNetDNS 'modules/vnet-with-dns-server.bicep' /*TODO: replace with correct path to [uri(parameters('_artifactsLocation'), concat('nestedtemplates/vnet-with-dns-server.json', parameters('_artifactsLocationSasToken')))]*/ = {
+module UpdateVNetDNS 'modules/vnet-with-dns-server.bicep' = {
   name: 'UpdateVNetDNS'
   params: {
     adsubnetname:adsubnetname
@@ -314,7 +311,7 @@ module UpdateVNetDNS 'modules/vnet-with-dns-server.bicep' /*TODO: replace with c
     virtualNetworkAddressRange: virtualNetworkAddressRange
     virtualNetworkName: virtualNetworkName
     DNSServerAddress: [
-      privateIPAddress
+      DCIPAddress
     ]
   }
   dependsOn: [
@@ -342,7 +339,7 @@ resource sqlnetworkInterfaceName 'Microsoft.Network/networkInterfaces@2020-06-01
     enableAcceleratedNetworking: true
   }
   dependsOn: [
-    VNet
+    UpdateVNetDNS
   ]
 }]
 
@@ -423,7 +420,7 @@ resource sqlvirtualMachineExtension 'Microsoft.Compute/virtualMachines/extension
     }
   }
   dependsOn: [
-    sqlvirtualMachineName_resource
+    UpdateVNetDNS
   ]
 }]
 
