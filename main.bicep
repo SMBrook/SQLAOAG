@@ -8,8 +8,8 @@ param adminPassword string
 @description('The FQDN of the Active Directory Domain to be created')
 param domainName string = 'testcorp.local'
 
-@description('Size of the VM for the controller')
-param vmSize string = 'Standard_D2s_v3'
+@description('Size of the VM for the domain controller')
+param advmSize string = 'Standard_D2s_v3'
 
 @description('The location of resources, such as templates and DSC modules, that the template depends on')
 param artifactsLocation string = 'https://raw.githubusercontent.com/SMBrook/SQLAOAG/main/'
@@ -30,7 +30,7 @@ param virtualNetworkName string = 'SQLDevClusterVNET'
 @description('Virtual network address range.')
 param virtualNetworkAddressRange string = '10.100.0.0/16'
 
-@description('DC IP address.')
+@description('Domain Controller IP address.')
 param DCIPAddress string = '10.100.0.4'
 
 @description('Subnet name.')
@@ -61,8 +61,8 @@ param existingOuPath string = ''
 @description('Specify the name of the storage account to be used for creating Cloud Witness for Windows server failover cluster')
 param cloudWitnessName string = 'clwitness${uniqueString(resourceGroup().id)}'
 
-@description('The virtual machine size.')
-param virtualMachineSize string = 'Standard_D8s_v3'
+@description('The SQL virtual machine size.')
+param sqlvirtualMachineSize string = 'Standard_D8s_v3'
 
 @allowed([
   'sql2019-ws2019'
@@ -224,7 +224,7 @@ resource virtualMachineName_resource 'Microsoft.Compute/virtualMachines@2019-03-
   location: location
   properties: {
     hardwareProfile: {
-      vmSize: vmSize
+      vmSize: advmSize
     }
     osProfile: {
       computerName: advirtualMachineName
@@ -350,7 +350,7 @@ resource sqlvirtualMachineName_resource 'Microsoft.Compute/virtualMachines@2020-
   location: location
   properties: {
     hardwareProfile: {
-      vmSize: virtualMachineSize
+      vmSize: sqlvirtualMachineSize
     }
     storageProfile: {
       osDisk: {
@@ -497,6 +497,38 @@ resource Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName 'Micr
     }
 }
 }]
+
+//Create SQL AOAG
+/*
+resource creatsqlaoag 'Microsoft.Compute/virtualMachines/extensions@2019-03-01' = {
+  name: 'creatsqlaoag/sqlaoag'
+  location: location
+  properties: {
+    publisher: 'Microsoft.Powershell'
+    type: 'DSC'
+    typeHandlerVersion: '2.19'
+    autoUpgradeMinorVersion: true
+    settings: {
+      ModulesUrl: uri(artifactsLocation, 'DSC/aoag.zip${artifactsLocationSasToken}')
+      ConfigurationFunction: 'Createaoag.ps1\\Createaoag'
+      Properties: {
+        DomainName: domainName
+        AdminCreds: {
+          UserName: adminUsername
+          Password: 'PrivateSettingsRef:AdminPassword'
+
+        }
+      }
+    }
+    protectedSettings: {
+      Items: {
+        AdminPassword: adminPassword
+        PrimaryNode: 'sqlVM-${virtualMachineNamePrefix}'
+      }
+    }
+  }
+}
+*/
 
 
 resource lb 'Microsoft.Network/loadBalancers@2020-05-01' = {
