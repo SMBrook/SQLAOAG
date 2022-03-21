@@ -138,31 +138,16 @@ var sqlVMNames = [for i in range(1, VirtualMachineCount): '${virtualMachineNameP
 
 param deploybastion bool = true
 
-/*@description('Specify a name for the listener for SQL Availability Group')
-param Listener string = 'aglistener'
+param availabilityGroupName string = 'aoagagn2'
+param aoag_listenername string = 'sqlcluster01/aoaglistener2'
+param ipAddress string = '10.100.1.11'
+param subnetResourceId string = resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, sqlsubnetname)
+param aoag_loadBalancerName string = 'aoaglb2'
+param probePort int = 52725
+param listenerPort int = 1433
+var SqlVmResourceIdList = [for (vm, i) in sqlVMNames: resourceId('Microsoft.SqlVirtualMachine/sqlVirtualMachines','sqlVM-${vm}')]
 
-@description('Specify the port for listener')
-param ListenerPort int = 1433
-
-@description('Specify the available private IP address for the listener from the subnet the existing Vms are part of.')
-param ListenerIp string = '10.100.1.8'
-
-@description('Specify the load balancer port number (e.g. 59999)')
-param ProbePort int = 59999*/
-
-//Create AVSet for DC - No longer needed?
-/*
-resource availabilitySetName_resource 'Microsoft.Compute/availabilitySets@2019-03-01' = {
-  location: location
-  name: availabilitySetName
-  properties: {
-    platformUpdateDomainCount: 20
-    platformFaultDomainCount: 2
-  }
-  sku: {
-    name: 'Aligned'
-  }
-}*/
+param sqlavailabilitySetName string = 'sqlavset'
 
 //Create VNET
 
@@ -320,6 +305,20 @@ module UpdateVNetDNS 'modules/vnet-with-dns-server.bicep' = {
   ]
 }
 
+//Create AVSet for SQL
+
+resource sqlavailabilitySet_resource 'Microsoft.Compute/availabilitySets@2019-03-01' = {
+  location: location
+  name: sqlavailabilitySetName
+  properties: {
+    platformUpdateDomainCount: 20
+    platformFaultDomainCount: 2
+  }
+  sku: {
+    name: 'Aligned'
+  }
+}
+
 //Create SQL VM Nics
 
 resource sqlnetworkInterfaceName 'Microsoft.Network/networkInterfaces@2020-06-01' = [for (vm, i) in sqlVMNames: {
@@ -350,6 +349,9 @@ resource sqlvirtualMachineName_resource 'Microsoft.Compute/virtualMachines@2020-
   name: 'sqlVM-${vm}'
   location: location
   properties: {
+    availabilitySet: {
+      id: resourceId('Microsoft.Compute/availabilitySets', sqlavailabilitySetName)
+    }
     hardwareProfile: {
       vmSize: sqlvirtualMachineSize
     }
@@ -396,6 +398,7 @@ resource sqlvirtualMachineName_resource 'Microsoft.Compute/virtualMachines@2020-
   }
   dependsOn: [
     sqlnetworkInterfaceName
+    sqlavailabilitySet_resource
   ]
 }]
 
@@ -499,41 +502,10 @@ resource Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName 'Micr
 }
 }]
 
-//Create SQL AOAG
-/*
-resource creatsqlaoag 'Microsoft.Compute/virtualMachines/extensions@2019-03-01' = {
-  name: 'creatsqlaoag/sqlaoag'
-  location: location
-  properties: {
-    publisher: 'Microsoft.Powershell'
-    type: 'DSC'
-    typeHandlerVersion: '2.19'
-    autoUpgradeMinorVersion: true
-    settings: {
-      ModulesUrl: uri(artifactsLocation, 'DSC/aoag.zip${artifactsLocationSasToken}')
-      ConfigurationFunction: 'Createaoag.ps1\\Createaoag'
-      Properties: {
-        DomainName: domainName
-        AdminCreds: {
-          UserName: adminUsername
-          Password: 'PrivateSettingsRef:AdminPassword'
-
-        }
-      }
-    }
-    protectedSettings: {
-      Items: {
-        AdminPassword: adminPassword
-        PrimaryNode: 'sqlVM-${virtualMachineNamePrefix}'
-      }
-    }
-  }
-}
-*/
 
 
-resource lb 'Microsoft.Network/loadBalancers@2020-05-01' = {
-  name: 'sqllb1'
+resource aoag_loadBalancer 'Microsoft.Network/loadBalancers@2019-06-01' = {
+  name: aoag_loadBalancerName
   location: location
   sku: {
     name: 'Standard'
@@ -545,45 +517,61 @@ resource lb 'Microsoft.Network/loadBalancers@2020-05-01' = {
         properties: {
           privateIPAllocationMethod: 'Dynamic'
           subnet: {
-            id: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, sqlsubnetname)
+            id: subnetResourceId
           }
         }
       }
     ]
   }
   dependsOn: [
-    sqlvirtualMachineExtension
-  ]
-}
-
-//Failing from here, mainly I suspect because of line 549 which needs a list of the deployed vms in a comma delimited fashion, may need an array?
-/*
-var SqlVmResourceIdList = [for (vm, i) in sqlVMNames: resourceId('Microsoft.SqlVirtualMachine/sqlVirtualMachines','sqlVM-${vm}')]
-
-resource FailoverClusterName_Listener 'Microsoft.SqlVirtualMachine/SqlVirtualMachineGroups/availabilityGroupListeners@2017-03-01-preview' = {
-  name: '${failoverClusterName}/${Listener}'
-  properties: {
-    createDefaultAvailabilityGroupIfNotExist: true
-    loadBalancerConfigurations: [
-      {
-        privateIpAddress: {
-          ipAddress: ListenerIp
-          subnetResourceId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, sqlsubnetname)
-        }
-        loadBalancerResourceId: lb.id
-        probePort: ProbePort
-        sqlVirtualMachineInstances: SqlVmResourceIdList
-      } 
-    ]
-    port: ListenerPort
-  }
-  dependsOn: [
     Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName
   ]
 }
 
-*/
-
+resource resourceName_resource 'Microsoft.SqlVirtualMachine/sqlVirtualMachineGroups/availabilityGroupListeners@2021-11-01-preview' = {
+  name: aoag_listenername
+  location: location
+  properties: {
+    availabilityGroupName: availabilityGroupName
+    loadBalancerConfigurations: [
+      {
+        privateIpAddress: {
+          ipAddress: ipAddress
+          subnetResourceId: subnetResourceId
+        }
+        loadBalancerResourceId: aoag_loadBalancer.id
+        probePort: probePort
+        sqlVirtualMachineInstances: SqlVmResourceIdList
+      }
+    ]
+    port: listenerPort
+    availabilityGroupConfiguration: {
+      replicas: [
+        {
+          commit: 'Asynchronous_Commit'
+          failover: 'Manual'
+          readableSecondary: 'no'
+          role: 'Primary'
+          sqlVirtualMachineInstanceId: resourceId('Microsoft.SqlVirtualMachine/sqlVirtualMachines','sqlVM-${virtualMachineNamePrefix}-1')
+        }
+        {
+          commit: 'Synchronous_Commit'
+          failover: 'Automatic'
+          readableSecondary: 'no'
+          role: 'Secondary'
+          sqlVirtualMachineInstanceId: resourceId('Microsoft.SqlVirtualMachine/sqlVirtualMachines','sqlVM-${virtualMachineNamePrefix}-2')
+        }
+        {
+          commit: 'Synchronous_Commit'
+          failover: 'Automatic'
+          readableSecondary: 'no'
+          role: 'Secondary'
+          sqlVirtualMachineInstanceId: resourceId('Microsoft.SqlVirtualMachine/sqlVirtualMachines','sqlVM-${virtualMachineNamePrefix}-3')
+        }
+      ]
+    }
+  }
+}
 
 
 
