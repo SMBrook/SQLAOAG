@@ -8,8 +8,8 @@ param adminPassword string
 @description('The FQDN of the Active Directory Domain to be created')
 param domainName string = 'testcorp.local'
 
-@description('Size of the VM for the controller')
-param vmSize string = 'Standard_D2s_v3'
+@description('Size of the VM for the domain controller')
+param advmSize string = 'Standard_D2s_v3'
 
 @description('The location of resources, such as templates and DSC modules, that the template depends on')
 param artifactsLocation string = 'https://raw.githubusercontent.com/SMBrook/SQLAOAG/main/'
@@ -21,20 +21,17 @@ param artifactsLocationSasToken string = ''
 @description('Location for all resources.')
 param location string = resourceGroup().location
 
-@description('Virtual machine name.')
-param virtualMachineName string = 'adVM'
+@description('Domain Controller Virtual machine name.')
+param advirtualMachineName string = 'adVM'
 
 @description('Virtual network name.')
-param virtualNetworkName string = 'adVNET'
+param virtualNetworkName string = 'SQLDevClusterVNET'
 
 @description('Virtual network address range.')
 param virtualNetworkAddressRange string = '10.100.0.0/16'
 
-@description('Network interface name.')
-param networkInterfaceName string = 'adNic'
-
-@description('Private IP address.')
-param privateIPAddress string = '10.100.0.4'
+@description('Domain Controller IP address.')
+param DCIPAddress string = '10.100.0.4'
 
 @description('Subnet name.')
 param adsubnetname string = 'ADSubnet'
@@ -48,27 +45,111 @@ param sqlsubnetname string = 'SQLSubnet'
 @description('AD Subnet IP range.')
 param sqlsubnetrange string = '10.100.1.0/24'
 
-@description('Availability set name.')
-param availabilitySetName string = 'adAvailabiltySet'
-
 @description('Bastion name.')
 param bastionHostName string = 'sqlaoagbastion'
 
 @description('Bastion subnet.')
 param bastionSubnetIpPrefix string = '10.100.2.0/24'
 
+@maxLength(15)
+@description('Specify the Windows Failover Cluster Name')
+param failoverClusterName string = 'sqlcluster01'
 
-resource availabilitySetName_resource 'Microsoft.Compute/availabilitySets@2019-03-01' = {
-  location: location
-  name: availabilitySetName
-  properties: {
-    platformUpdateDomainCount: 20
-    platformFaultDomainCount: 2
-  }
-  sku: {
-    name: 'Aligned'
-  }
+@description('Specify an optional Organizational Unit (OU) on AD Domain where the CNO (Computer Object for Cluster Name) will be created (e.g. OU=testou,OU=testou2,DC=contoso,DC=com). Default is empty.')
+param existingOuPath string = ''
+
+@description('Specify the name of the storage account to be used for creating Cloud Witness for Windows server failover cluster')
+param cloudWitnessName string = 'clwitness${uniqueString(resourceGroup().id)}'
+
+@description('The SQL virtual machine size.')
+param sqlvirtualMachineSize string = 'Standard_D8s_v3'
+
+@allowed([
+  'sql2019-ws2019'
+  'sql2017-ws2019'
+  'SQL2017-WS2016'
+  'SQL2016SP1-WS2016'
+  'SQL2016SP2-WS2016'
+  'SQL2014SP3-WS2012R2'
+  'SQL2014SP2-WS2012R2'
+])
+@description('Windows Server and SQL Offer')
+param imageOffer string = 'sql2019-ws2019'
+
+@allowed([
+  'Standard'
+  'Enterprise'
+  'SQLDEV'
+  'Web'
+  'Express'
+])
+@description('SQL Server Sku')
+param sqlSku string = 'SQLDEV'
+
+@description('The admin user name of the SQL VMs')
+param sqllocaladminUsername string = 'sqlvmadmin'
+
+@description('The admin password of the SQL VMs')
+@secure()
+param sqllocaladminPassword string
+
+@allowed([
+  'GENERAL'
+  'OLTP'
+  'DW'
+])
+@description('SQL Server Workload Type')
+param storageWorkloadType string = 'GENERAL'
+
+@minValue(1)
+@maxValue(8)
+@description('Amount of data disks (100GB each) for SQL Data files')
+param sqlDataDisksCount int = 2
+
+@description('Path for SQL Data files. Please choose drive letter from F to Z, and other drives from A to E are reserved for system')
+param dataPath string = 'F:\\SQLData'
+
+@minValue(1)
+@maxValue(8)
+@description('Amount of data disks (100GB each) for SQL Log files')
+param sqlLogDisksCount int = 2
+
+@description('Path for SQL Log files. Please choose drive letter from F to Z and different than the one used for SQL data. Drive letter from A to E are reserved for system')
+param logPath string = 'G:\\SQLLog'
+
+var diskConfigurationType = 'NEW'
+var dataDisksLuns = array(range(0, sqlDataDisksCount))
+var logDisksLuns = array(range(sqlDataDisksCount, sqlLogDisksCount))
+var dataDisks = {
+  createOption: 'Empty'
+  caching: 'ReadOnly'
+  writeAcceleratorEnabled: false
+  storageAccountType: 'Premium_LRS'
+  diskSizeGB: 100
 }
+var tempDbPath = 'D:\\SQLTemp'
+
+@description('Specify number of VM instances to be created')
+param VirtualMachineCount int = 3
+
+param virtualMachineNamePrefix string ='sql'
+
+var sqlVMNames = [for i in range(1, VirtualMachineCount): '${virtualMachineNamePrefix}-${i}']
+
+param deploybastion bool = true
+
+param availabilityGroupName string = 'aoagagn2'
+param aoag_listenername string = 'sqlcluster01/aoaglistener2'
+param ipAddress string = '10.100.1.11'
+param subnetResourceId string = resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, sqlsubnetname)
+param aoag_loadBalancerName string = 'aoaglb2'
+param probePort int = 52725
+param listenerPort int = 1433
+var SqlVmResourceIdList = [for (vm, i) in sqlVMNames: resourceId('Microsoft.SqlVirtualMachine/sqlVirtualMachines','sqlVM-${vm}')]
+
+param sqlavailabilitySetName string = 'sqlavset'
+
+//Create VNET
 
 module VNet 'modules/VNET.bicep'= {
   name: 'VNet'
@@ -83,13 +164,13 @@ module VNet 'modules/VNET.bicep'= {
   }
 }
 
-module bastion 'modules/bastion.bicep'= {
+//Create Bastion Host
+module bastion 'modules/bastion.bicep'= if (deploybastion) {
   name: 'bastion'
   params: {
     bastionHostName: bastionHostName
     bastionSubnetIpPrefix: bastionSubnetIpPrefix
     vnetName: virtualNetworkName
-    vnetIpPrefix: virtualNetworkAddressRange
     location: location
   }
   dependsOn: [
@@ -98,9 +179,10 @@ module bastion 'modules/bastion.bicep'= {
   ]
 }
 
+//Create DC Nic
 
-resource networkInterfaceName_resource 'Microsoft.Network/networkInterfaces@2019-02-01' = {
-  name: networkInterfaceName
+resource dcnic 'Microsoft.Network/networkInterfaces@2019-02-01' = {
+  name: '${advirtualMachineName}-nic'
   location: location
   properties: {
     ipConfigurations: [
@@ -108,7 +190,7 @@ resource networkInterfaceName_resource 'Microsoft.Network/networkInterfaces@2019
         name: 'ipconfig1'
         properties: {
           privateIPAllocationMethod: 'Static'
-          privateIPAddress: privateIPAddress
+          privateIPAddress: DCIPAddress
           subnet: {
             id: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, adsubnetname)
           }
@@ -121,18 +203,17 @@ resource networkInterfaceName_resource 'Microsoft.Network/networkInterfaces@2019
   ]
 }
 
+//Create Domain Controller VM
+
 resource virtualMachineName_resource 'Microsoft.Compute/virtualMachines@2019-03-01' = {
-  name: virtualMachineName
+  name: advirtualMachineName
   location: location
   properties: {
     hardwareProfile: {
-      vmSize: vmSize
-    }
-    availabilitySet: {
-      id: availabilitySetName_resource.id
+      vmSize: advmSize
     }
     osProfile: {
-      computerName: virtualMachineName
+      computerName: advirtualMachineName
       adminUsername: adminUsername
       adminPassword: adminPassword
     }
@@ -144,7 +225,7 @@ resource virtualMachineName_resource 'Microsoft.Compute/virtualMachines@2019-03-
         version: 'latest'
       }
       osDisk: {
-        name: '${virtualMachineName}_OSDisk'
+        name: '${advirtualMachineName}_OSDisk'
         caching: 'ReadOnly'
         createOption: 'FromImage'
         managedDisk: {
@@ -153,7 +234,7 @@ resource virtualMachineName_resource 'Microsoft.Compute/virtualMachines@2019-03-
       }
       dataDisks: [
         {
-          name: '${virtualMachineName}_DataDisk'
+          name: '${advirtualMachineName}_DataDisk'
           caching: 'ReadWrite'
           createOption: 'Empty'
           diskSizeGB: 20
@@ -167,12 +248,14 @@ resource virtualMachineName_resource 'Microsoft.Compute/virtualMachines@2019-03-
     networkProfile: {
       networkInterfaces: [
         {
-          id: networkInterfaceName_resource.id
+          id: dcnic.id
         }
       ]
     }
   }
 }
+
+//Create AD Forest
 
 resource virtualMachineName_CreateADForest 'Microsoft.Compute/virtualMachines/extensions@2019-03-01' = {
   parent: virtualMachineName_resource
@@ -202,103 +285,41 @@ resource virtualMachineName_CreateADForest 'Microsoft.Compute/virtualMachines/ex
   }
 }
 
-module UpdateVNetDNS 'modules/vnet-with-dns-server.bicep' /*TODO: replace with correct path to [uri(parameters('_artifactsLocation'), concat('nestedtemplates/vnet-with-dns-server.json', parameters('_artifactsLocationSasToken')))]*/ = {
+//Update VNET DNS Setting to point to new DC
+module UpdateVNetDNS 'modules/vnet-with-dns-server.bicep' = {
   name: 'UpdateVNetDNS'
   params: {
-    virtualNetworkName: virtualNetworkName
+    adsubnetname:adsubnetname
+    adsubnetrange:adsubnetrange
+    sqlsubnetname:sqlsubnetname
+    sqlsubnetrange:sqlsubnetrange
+    location:location
     virtualNetworkAddressRange: virtualNetworkAddressRange
-    adsubnetname: adsubnetname
-    adsubnetrange: adsubnetrange
-    sqlsubnetname: sqlsubnetname
-    sqlsubnetrange: sqlsubnetrange
+    virtualNetworkName: virtualNetworkName
     DNSServerAddress: [
-      privateIPAddress
+      DCIPAddress
     ]
-    location: location
   }
   dependsOn: [
     virtualMachineName_CreateADForest
   ]
 }
 
-@description('The name of the VM')
-param sqlvirtualMachineName string = 'sql1'
+//Create AVSet for SQL
 
-@description('The virtual machine size.')
-param virtualMachineSize string = 'Standard_D8s_v3'
-
-@allowed([
-  'sql2019-ws2019'
-  'sql2017-ws2019'
-  'SQL2017-WS2016'
-  'SQL2016SP1-WS2016'
-  'SQL2016SP2-WS2016'
-  'SQL2014SP3-WS2012R2'
-  'SQL2014SP2-WS2012R2'
-])
-@description('Windows Server and SQL Offer')
-param imageOffer string = 'sql2019-ws2019'
-
-@allowed([
-  'Standard'
-  'Enterprise'
-  'SQLDEV'
-  'Web'
-  'Express'
-])
-@description('SQL Server Sku')
-param sqlSku string = 'SQLDEV'
-
-@description('The admin user name of the VM')
-param sqladminUsername string
-
-@description('The admin password of the VM')
-@secure()
-param sqladminPassword string
-
-@allowed([
-  'GENERAL'
-  'OLTP'
-  'DW'
-])
-@description('SQL Server Workload Type')
-param storageWorkloadType string = 'GENERAL'
-
-@minValue(1)
-@maxValue(8)
-@description('Amount of data disks (100GB each) for SQL Data files')
-param sqlDataDisksCount int = 2
-
-@description('Path for SQL Data files. Please choose drive letter from F to Z, and other drives from A to E are reserved for system')
-param dataPath string = 'F:\\SQLData'
-
-@minValue(1)
-@maxValue(8)
-@description('Amount of data disks (100GB each) for SQL Log files')
-param sqlLogDisksCount int = 2
-
-@description('Path for SQL Log files. Please choose drive letter from F to Z and different than the one used for SQL data. Drive letter from A to E are reserved for system')
-param logPath string = 'G:\\SQLLog'
-
-var networkInterfaceName_var = '${sqlvirtualMachineName}-nic'
-var diskConfigurationType = 'NEW'
-var dataDisksLuns = array(range(0, sqlDataDisksCount))
-var logDisksLuns = array(range(sqlDataDisksCount, sqlLogDisksCount))
-var dataDisks = {
-  createOption: 'Empty'
-  caching: 'ReadOnly'
-  writeAcceleratorEnabled: false
-  storageAccountType: 'Premium_LRS'
-  diskSizeGB: 100
+resource sqlavailabilitySet_resource 'Microsoft.Compute/availabilitySets@2019-03-01' = {
+  location: location
+  name: sqlavailabilitySetName
+  properties: {
+    platformUpdateDomainCount: 20
+    platformFaultDomainCount: 2
+  }
+  sku: {
+    name: 'Aligned'
+  }
 }
-var tempDbPath = 'D:\\SQLTemp'
 
-@description('Specify number of VM instances to be created')
-param VirtualMachineCount int = 3
-
-param virtualMachineNamePrefix string
-
-var sqlVMNames = [for i in range(1, VirtualMachineCount): '${virtualMachineNamePrefix}-${i}']
+//Create SQL VM Nics
 
 resource sqlnetworkInterfaceName 'Microsoft.Network/networkInterfaces@2020-06-01' = [for (vm, i) in sqlVMNames: {
   name: 'nic-${vm}'
@@ -318,17 +339,21 @@ resource sqlnetworkInterfaceName 'Microsoft.Network/networkInterfaces@2020-06-01
     enableAcceleratedNetworking: true
   }
   dependsOn: [
-    VNet
+    UpdateVNetDNS
   ]
 }]
 
+//Create SQL VMs
 
 resource sqlvirtualMachineName_resource 'Microsoft.Compute/virtualMachines@2020-06-01' = [for (vm, i) in sqlVMNames: {
   name: 'sqlVM-${vm}'
   location: location
   properties: {
+    availabilitySet: {
+      id: resourceId('Microsoft.Compute/availabilitySets', sqlavailabilitySetName)
+    }
     hardwareProfile: {
-      vmSize: virtualMachineSize
+      vmSize: sqlvirtualMachineSize
     }
     storageProfile: {
       osDisk: {
@@ -362,9 +387,9 @@ resource sqlvirtualMachineName_resource 'Microsoft.Compute/virtualMachines@2020-
       ]
     }
     osProfile: {
-      computerName: sqlvirtualMachineName
-      adminUsername: sqladminUsername
-      adminPassword: sqladminPassword
+      computerName: 'sqlVM-${vm}'
+      adminUsername: sqllocaladminUsername
+      adminPassword: sqllocaladminPassword
       windowsConfiguration: {
         enableAutomaticUpdates: true
         provisionVMAgent: true
@@ -372,9 +397,12 @@ resource sqlvirtualMachineName_resource 'Microsoft.Compute/virtualMachines@2020-
     }
   }
   dependsOn: [
-    UpdateVNetDNS
+    sqlnetworkInterfaceName
+    sqlavailabilitySet_resource
   ]
 }]
+
+//Join SQL Servers to AD Domain
 
 resource sqlvirtualMachineExtension 'Microsoft.Compute/virtualMachines/extensions@2021-03-01' = [for (vm, i) in sqlVMNames: {
   name: 'sqlVM-${vm}/joindomain'
@@ -400,11 +428,53 @@ resource sqlvirtualMachineExtension 'Microsoft.Compute/virtualMachines/extension
   ]
 }]
 
+//Create Failover Cluster Witness Storage Account
+
+resource cloudWitnessName_resource 'Microsoft.Storage/storageAccounts@2018-07-01' = {
+  name: cloudWitnessName
+  sku: {
+    name: 'Standard_LRS'
+  }
+  kind: 'StorageV2'
+  location: location
+  properties: {
+    accessTier: 'Hot'
+    supportsHttpsTrafficOnly: true
+  }
+  dependsOn: [
+    sqlvirtualMachineExtension
+  ]
+}
+
+//Create Failover Cluster
+
+resource failoverClusterName_resource 'Microsoft.SqlVirtualMachine/SqlVirtualMachineGroups@2017-03-01-preview' = {
+  name: failoverClusterName
+  location: location
+  properties: {
+    sqlImageOffer: imageOffer
+    sqlImageSku: 'Developer'
+    wsfcDomainProfile: {
+      domainFqdn: domainName
+      ouPath: existingOuPath
+      clusterBootstrapAccount: '${adminUsername}@${domainName}'
+      clusterOperatorAccount: '${adminUsername}@${domainName}'
+      sqlServiceAccount: '${adminUsername}@${domainName}'
+      storageAccountUrl: reference(cloudWitnessName_resource.id, '2018-07-01').primaryEndpoints.blob
+      storageAccountPrimaryKey: listKeys(cloudWitnessName_resource.id, '2018-07-01').keys[0].value
+    }
+  }
+  dependsOn: [
+    sqlvirtualMachineExtension
+  ]
+}
+
+//Create SQL VM Resources in Azure and add to Failover Cluster
 
 resource Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName 'Microsoft.SqlVirtualMachine/sqlVirtualMachines@2017-03-01-preview' = [for (vm, i) in sqlVMNames: {
   name: 'sqlVM-${vm}'
   location: location
-  properties: {
+  properties: {  
     virtualMachineResourceId: resourceId('Microsoft.Compute/virtualMachines', 'sqlVM-${vm}')
     sqlManagement: 'Full'
     sqlServerLicenseType: 'PAYG'
@@ -423,10 +493,88 @@ resource Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName 'Micr
         defaultFilePath: tempDbPath
       }
     }
-  }
-  dependsOn: [
-    sqlvirtualMachineExtension
-  ]
+    sqlVirtualMachineGroupResourceId: failoverClusterName_resource.id
+    wsfcDomainCredentials: {
+      clusterBootstrapAccountPassword: adminPassword
+      clusterOperatorAccountPassword: adminPassword
+      sqlServiceAccountPassword: adminPassword
+    }
+}
 }]
 
-output sqladminUsername string = sqladminUsername
+//Create Loadbalancer for Always-on SQL VMs
+
+resource aoag_loadBalancer 'Microsoft.Network/loadBalancers@2019-06-01' = {
+  name: aoag_loadBalancerName
+  location: location
+  sku: {
+    name: 'Standard'
+  }
+  properties: {
+    frontendIPConfigurations: [
+      {
+        name: 'LoadBalancerFrontEnd'
+        properties: {
+          privateIPAllocationMethod: 'Dynamic'
+          subnet: {
+            id: subnetResourceId
+          }
+        }
+      }
+    ]
+  }
+  dependsOn: [
+    Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName
+  ]
+}
+
+//Create Always-on group and listener, add to loadbalancer
+
+resource resourceName_resource 'Microsoft.SqlVirtualMachine/sqlVirtualMachineGroups/availabilityGroupListeners@2021-11-01-preview' = {
+  name: aoag_listenername
+  location: location
+  properties: {
+    availabilityGroupName: availabilityGroupName
+    loadBalancerConfigurations: [
+      {
+        privateIpAddress: {
+          ipAddress: ipAddress
+          subnetResourceId: subnetResourceId
+        }
+        loadBalancerResourceId: aoag_loadBalancer.id
+        probePort: probePort
+        sqlVirtualMachineInstances: SqlVmResourceIdList
+      }
+    ]
+    port: listenerPort
+    availabilityGroupConfiguration: {
+      replicas: [
+        {
+          commit: 'Asynchronous_Commit'
+          failover: 'Manual'
+          readableSecondary: 'no'
+          role: 'Primary'
+          sqlVirtualMachineInstanceId: resourceId('Microsoft.SqlVirtualMachine/sqlVirtualMachines','sqlVM-${virtualMachineNamePrefix}-1')
+        }
+        {
+          commit: 'Synchronous_Commit'
+          failover: 'Automatic'
+          readableSecondary: 'no'
+          role: 'Secondary'
+          sqlVirtualMachineInstanceId: resourceId('Microsoft.SqlVirtualMachine/sqlVirtualMachines','sqlVM-${virtualMachineNamePrefix}-2')
+        }
+        {
+          commit: 'Synchronous_Commit'
+          failover: 'Automatic'
+          readableSecondary: 'no'
+          role: 'Secondary'
+          sqlVirtualMachineInstanceId: resourceId('Microsoft.SqlVirtualMachine/sqlVirtualMachines','sqlVM-${virtualMachineNamePrefix}-3')
+        }
+      ]
+    }
+  }
+}
+
+
+
+
