@@ -502,7 +502,7 @@ resource Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName 'Micr
 }
 }]
 
-
+//Create Loadbalancer for Always-on SQL VMs
 
 resource aoag_loadBalancer 'Microsoft.Network/loadBalancers@2019-06-01' = {
   name: aoag_loadBalancerName
@@ -527,6 +527,8 @@ resource aoag_loadBalancer 'Microsoft.Network/loadBalancers@2019-06-01' = {
     Microsoft_SqlVirtualMachine_SqlVirtualMachines_virtualMachineName
   ]
 }
+
+//Create Always-on group and listener, add to loadbalancer
 
 resource resourceName_resource 'Microsoft.SqlVirtualMachine/sqlVirtualMachineGroups/availabilityGroupListeners@2021-11-01-preview' = {
   name: aoag_listenername
