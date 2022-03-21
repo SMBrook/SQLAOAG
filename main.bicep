@@ -395,7 +395,7 @@ resource sqlvirtualMachineName_resource 'Microsoft.Compute/virtualMachines@2020-
     }
   }
   dependsOn: [
-    UpdateVNetDNS
+    sqlnetworkInterfaceName
   ]
 }]
 
@@ -421,7 +421,7 @@ resource sqlvirtualMachineExtension 'Microsoft.Compute/virtualMachines/extension
     }
   }
   dependsOn: [
-    UpdateVNetDNS
+    sqlvirtualMachineName_resource
   ]
 }]
 

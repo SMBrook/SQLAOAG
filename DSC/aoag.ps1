@@ -30,9 +30,9 @@ foreach($node in Get-ClusterNode)
 }
 
 #Step 6: Create the Availability Group, replace SERVERNAME with the name of the primary replica instance
-New-SqlAvailabilityGroup -InputObject "WSFC2016-NODE1" -Name "AG_Prod" -AvailabilityReplica $replicas -Database @("Northwind")
+New-SqlAvailabilityGroup -InputObject "$PrimaryNode-1" -Name "AG_Prod" -AvailabilityReplica $replicas -Database @("DefaultAOAGDB")
 
 #Step 7: Join the secondary replicas and databases to the Availability Group
 Join-SqlAvailabilityGroup -Path “SQLSERVER:\SQL\WSFC2016-NODE2\Default” -Name “AG_Prod”
-Add-SqlAvailabilityDatabase -Path "SQLSERVER:\SQL\WSFC2016-NODE2\Default\AvailabilityGroups\AG_Prod" -Database "Northwind" 
+Add-SqlAvailabilityDatabase -Path "SQLSERVER:\SQL\WSFC2016-NODE2\Default\AvailabilityGroups\AG_Prod" -Database "DefaultAOAGDB" 
 }
