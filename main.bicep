@@ -164,21 +164,6 @@ module VNet 'modules/VNET.bicep'= {
   }
 }
 
-//Create Bastion Host
-module bastion 'modules/bastion.bicep'= if (deploybastion) {
-  name: 'bastion'
-  params: {
-    bastionHostName: bastionHostName
-    bastionSubnetIpPrefix: bastionSubnetIpPrefix
-    vnetName: virtualNetworkName
-    location: location
-  }
-  dependsOn: [
-    VNet
-    UpdateVNetDNS
-  ]
-}
-
 //Create DC Nic
 
 resource dcnic 'Microsoft.Network/networkInterfaces@2019-02-01' = {
@@ -428,6 +413,23 @@ resource sqlvirtualMachineExtension 'Microsoft.Compute/virtualMachines/extension
   ]
 }]
 
+//Create Bastion Host
+module bastion 'modules/bastion.bicep'= if (deploybastion) {
+  name: 'bastion'
+  params: {
+    bastionHostName: bastionHostName
+    bastionSubnetIpPrefix: bastionSubnetIpPrefix
+    vnetName: virtualNetworkName
+    location: location
+  }
+  dependsOn: [
+    VNet
+    UpdateVNetDNS
+    sqlvirtualMachineExtension
+  ]
+}
+
+
 //Create Failover Cluster Witness Storage Account
 
 resource cloudWitnessName_resource 'Microsoft.Storage/storageAccounts@2018-07-01' = {
@@ -466,6 +468,7 @@ resource failoverClusterName_resource 'Microsoft.SqlVirtualMachine/SqlVirtualMac
   }
   dependsOn: [
     sqlvirtualMachineExtension
+    bastion
   ]
 }
 
